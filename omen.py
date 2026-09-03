@@ -60,6 +60,8 @@ def fetch_giveaways():
 
     data = response.json()
 
+    print(json.dumps(data, indent=2))
+
     for category in data.get("data", []):
         if category.get("category") != "OMEN Giveaways":
             continue
