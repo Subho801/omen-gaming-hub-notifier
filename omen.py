@@ -1,7 +1,7 @@
 import json
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 
@@ -60,30 +60,57 @@ def fetch_giveaways():
 
     data = response.json()
 
-    for category in data.get("data", []):
-        for child in category.get("children", []):
-            if child.get("category") != "OMEN Giveaways":
-                continue
+    omen_giveaways = []
 
-            promotions = child.get("promotions", [])
+    def find_omen_categories(obj):
+        if isinstance(obj, dict):
+            if obj.get("category") == "OMEN Giveaways":
+                omen_giveaways.extend(obj.get("promotions", []))
 
-            print("[OMEN] API returned these giveaways:")
+            for value in obj.values():
+                find_omen_categories(value)
 
-            for promo in promotions:
-                print(
-                    f"- {promo.get('title')} | "
-                    f"{promo.get('id')} | "
-                    f"{promo.get('buttonAction')} | "
-                    f"{promo.get('codename')}"
-                )
+        elif isinstance(obj, list):
+            for item in obj:
+                find_omen_categories(item)
 
-            return [
-                promo
-                for promo in promotions
-                if promo.get("buttonAction") == "GameCodeHPID"
-            ]
+    find_omen_categories(data)
 
-    return []
+    print("[OMEN] API returned these giveaways:")
+
+    seen = set()
+
+    for promo in omen_giveaways:
+        promo_id = str(promo.get("id"))
+
+        if promo_id in seen:
+            continue
+
+        seen.add(promo_id)
+
+        print(
+            f"- {promo.get('title')} | "
+            f"{promo.get('id')} | "
+            f"{promo.get('buttonAction')} | "
+            f"{promo.get('codename')}"
+        )
+
+    unique_giveaways = []
+    seen = set()
+
+    for promo in omen_giveaways:
+        promo_id = str(promo.get("id"))
+
+        if not promo_id or promo_id in seen:
+            continue
+
+        seen.add(promo_id)
+
+        if promo.get("buttonAction") == "GameCodeHPID":
+            unique_giveaways.append(promo)
+
+    return unique_giveaways
+
 
 def send_discord(promo):
     title = promo.get("title", "OMEN Giveaway")
@@ -109,7 +136,7 @@ def send_discord(promo):
         "footer": {
             "text": "HP OMEN Gaming Hub"
         },
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
     if image:
