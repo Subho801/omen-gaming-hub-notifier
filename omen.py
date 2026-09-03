@@ -60,34 +60,46 @@ def fetch_giveaways():
 
     data = response.json()
 
-    omen_giveaways = []
+    giveaways = []
+    seen = set()
 
-    def find_omen_categories(obj):
+    def scan(obj, parent_category=None):
         if isinstance(obj, dict):
-            if obj.get("category") == "OMEN Giveaways":
-                omen_giveaways.extend(obj.get("promotions", []))
 
-            for value in obj.values():
-                find_omen_categories(value)
+            current_category = obj.get("category", parent_category)
+
+            # Track explicit category names.
+            if obj.get("category") in {
+                "OMEN Giveaways",
+                "Expired Giveaways",
+            }:
+                current_category = obj.get("category")
+
+            # Detect genuine OMEN code giveaways.
+            if (
+                obj.get("buttonAction") == "GameCodeHPID"
+                and obj.get("vendorPlatformName") == "OMEN"
+                and obj.get("discountTag") == "Claim For Free"
+                and current_category != "Expired Giveaways"
+            ):
+                promo_id = str(obj.get("id"))
+
+                if promo_id and promo_id not in seen:
+                    seen.add(promo_id)
+                    giveaways.append(obj)
+
+            for key, value in obj.items():
+                scan(value, current_category)
 
         elif isinstance(obj, list):
             for item in obj:
-                find_omen_categories(item)
+                scan(item, parent_category)
 
-    find_omen_categories(data)
+    scan(data)
 
-    print("[OMEN] API returned these giveaways:")
+    print("[OMEN] Detected active OMEN giveaways:")
 
-    seen = set()
-
-    for promo in omen_giveaways:
-        promo_id = str(promo.get("id"))
-
-        if promo_id in seen:
-            continue
-
-        seen.add(promo_id)
-
+    for promo in giveaways:
         print(
             f"- {promo.get('title')} | "
             f"{promo.get('id')} | "
@@ -95,21 +107,7 @@ def fetch_giveaways():
             f"{promo.get('codename')}"
         )
 
-    unique_giveaways = []
-    seen = set()
-
-    for promo in omen_giveaways:
-        promo_id = str(promo.get("id"))
-
-        if not promo_id or promo_id in seen:
-            continue
-
-        seen.add(promo_id)
-
-        if promo.get("buttonAction") == "GameCodeHPID":
-            unique_giveaways.append(promo)
-
-    return unique_giveaways
+    return giveaways
 
 
 def send_discord(promo):
@@ -167,7 +165,7 @@ def main():
 
     print(
         f"[OMEN] Found {len(giveaways)} "
-        f"GameCodeHPID giveaway(s)"
+        f"active OMEN giveaway(s)"
     )
 
     new_count = 0
