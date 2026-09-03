@@ -67,6 +67,16 @@ def fetch_giveaways():
 
             promotions = child.get("promotions", [])
 
+            print("[OMEN] API returned these giveaways:")
+
+            for promo in promotions:
+                print(
+                    f"- {promo.get('title')} | "
+                    f"{promo.get('id')} | "
+                    f"{promo.get('buttonAction')} | "
+                    f"{promo.get('codename')}"
+                )
+
             return [
                 promo
                 for promo in promotions
@@ -74,7 +84,6 @@ def fetch_giveaways():
             ]
 
     return []
-
 
 def send_discord(promo):
     title = promo.get("title", "OMEN Giveaway")
