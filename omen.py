@@ -60,19 +60,18 @@ def fetch_giveaways():
 
     data = response.json()
 
-    print(json.dumps(data, indent=2))
-
     for category in data.get("data", []):
-        if category.get("category") != "OMEN Giveaways":
-            continue
+        for child in category.get("children", []):
+            if child.get("category") != "OMEN Giveaways":
+                continue
 
-        promotions = category.get("promotions", [])
+            promotions = child.get("promotions", [])
 
-        return [
-            promo
-            for promo in promotions
-            if promo.get("buttonAction") == "GameCodeHPID"
-        ]
+            return [
+                promo
+                for promo in promotions
+                if promo.get("buttonAction") == "GameCodeHPID"
+            ]
 
     return []
 
