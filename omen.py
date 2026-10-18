@@ -1,18 +1,19 @@
+
 import json
 import os
 import time
+import urllib3
 from datetime import datetime, timezone
 
 import requests
-import urllib3
-
-# TEMPORARY WORKAROUND for HP's expired API certificate.
-# Remove this workaround after HP renews the certificate.
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 API_URL = "https://www.hpgamestream.com/api/content/deals/categories?queryDeals=true"
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+
+# TEMPORARY WORKAROUND:
+# HP's API certificate is expired. Remove this after HP fixes it.
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 HEADERS = {
     "User-Agent": "OGH-UL-1101.2607.3.0",
@@ -42,61 +43,84 @@ def load_posted():
 
     try:
         with open(POSTED_FILE, "r", encoding="utf-8") as f:
-            return set(json.load(f))
-    except (json.JSONDecodeError, OSError):
+            data = json.load(f)
+
+        if isinstance(data, list):
+            return set(str(item) for item in data)
+
+        print("[OMEN] Warning: posted.json is not a list.")
+        return set()
+
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"[OMEN] Could not load posted.json: {exc}")
         return set()
 
 
 def save_posted(posted):
-    with open(POSTED_FILE, "w", encoding="utf-8") as f:
-        json.dump(sorted(posted), f, indent=2)
+    try:
+        with open(POSTED_FILE, "w", encoding="utf-8") as f:
+            json.dump(sorted(posted), f, indent=2)
+    except OSError as exc:
+        print(f"[OMEN] Could not save posted.json: {exc}")
+        raise
 
 
 def fetch_giveaways():
     HEADERS["currentTimestamp"] = str(int(time.time()))
 
-    response = requests.get(
-    API_URL,
-    headers=HEADERS,
-    timeout=30,
-    verify=False  # TEMPORARY: HP's certificate has expired
-)
+    try:
+        response = requests.get(
+            API_URL,
+            headers=HEADERS,
+            timeout=30,
+            verify=False,  # TEMPORARY: expired HP certificate
+        )
+        response.raise_for_status()
+        data = response.json()
 
-response.raise_for_status()
+    except requests.exceptions.SSLError as exc:
+        print(f"[OMEN] SSL error while fetching giveaways: {exc}")
+        raise
 
-    response.raise_for_status()
+    except requests.exceptions.HTTPError as exc:
+        print(f"[OMEN] HP API returned an HTTP error: {exc}")
+        raise
 
-    data = response.json()
+    except requests.exceptions.RequestException as exc:
+        print(f"[OMEN] Could not connect to HP API: {exc}")
+        raise
+
+    except ValueError as exc:
+        print(f"[OMEN] HP API did not return valid JSON: {exc}")
+        raise
 
     giveaways = []
     seen = set()
 
     def scan(obj, parent_category=None):
         if isinstance(obj, dict):
-
             current_category = obj.get("category", parent_category)
 
-            # Track explicit category names.
             if obj.get("category") in {
                 "OMEN Giveaways",
                 "Expired Giveaways",
             }:
                 current_category = obj.get("category")
 
-            # Detect genuine OMEN code giveaways.
+            # Preserve the original genuine OMEN giveaway filters.
             if (
                 obj.get("buttonAction") == "GameCodeHPID"
                 and obj.get("vendorPlatformName") == "OMEN"
                 and obj.get("discountTag") == "Claim For Free"
                 and current_category != "Expired Giveaways"
             ):
-                promo_id = str(obj.get("id"))
+                promo_id = str(obj.get("id", ""))
 
-                if promo_id and promo_id not in seen:
+                if promo_id and promo_id != "None" and promo_id not in seen:
                     seen.add(promo_id)
                     giveaways.append(obj)
 
-            for key, value in obj.items():
+            for value in obj.values():
                 scan(value, current_category)
 
         elif isinstance(obj, list):
@@ -119,6 +143,11 @@ response.raise_for_status()
 
 
 def send_discord(promo):
+    if not WEBHOOK_URL:
+        raise RuntimeError(
+            "WEBHOOK_URL is missing. Check your GitHub Actions secrets."
+        )
+
     title = promo.get("title", "OMEN Giveaway")
     body = promo.get("body", "")
     image = promo.get("imageUrl")
@@ -131,36 +160,36 @@ def send_discord(promo):
             {
                 "name": "🎮 Platform",
                 "value": "OMEN Gaming Hub",
-                "inline": True
+                "inline": True,
             },
             {
                 "name": "🎁 Type",
                 "value": "Free In-Game Item / Code",
-                "inline": True
-            }
+                "inline": True,
+            },
         ],
         "footer": {
-            "text": "HP OMEN Gaming Hub"
+            "text": "HP OMEN Gaming Hub",
         },
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
     if image:
-        embed["image"] = {
-            "url": image
-        }
+        embed["image"] = {"url": image}
 
-    payload = {
-        "embeds": [embed]
-    }
+    payload = {"embeds": [embed]}
 
-    response = requests.post(
-        WEBHOOK_URL,
-        json=payload,
-        timeout=30
-    )
+    try:
+        response = requests.post(
+            WEBHOOK_URL,
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
 
-    response.raise_for_status()
+    except requests.exceptions.RequestException as exc:
+        print(f"[DISCORD] Failed to post {title}: {exc}")
+        raise
 
     print(f"[DISCORD] Posted: {title}")
 
@@ -169,6 +198,8 @@ def main():
     print("[OMEN] Checking giveaways...")
 
     posted = load_posted()
+
+    # If fetching fails, stop without overwriting posted.json.
     giveaways = fetch_giveaways()
 
     print(
@@ -179,9 +210,9 @@ def main():
     new_count = 0
 
     for promo in giveaways:
-        promo_id = str(promo.get("id"))
+        promo_id = str(promo.get("id", ""))
 
-        if not promo_id or promo_id in posted:
+        if not promo_id or promo_id == "None" or promo_id in posted:
             continue
 
         print(f"[NEW] {promo.get('title')}")
@@ -189,12 +220,18 @@ def main():
         send_discord(promo)
 
         posted.add(promo_id)
+        save_posted(posted)
         new_count += 1
 
+    # Save even when there were no new giveaways.
     save_posted(posted)
 
     print(f"[OMEN] {new_count} new giveaway(s)")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        print(f"[OMEN] Workflow failed: {type(exc).__name__}: {exc}")
+        raise
