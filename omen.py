@@ -4,6 +4,11 @@ import time
 from datetime import datetime, timezone
 
 import requests
+import urllib3
+
+# TEMPORARY WORKAROUND for HP's expired API certificate.
+# Remove this workaround after HP renews the certificate.
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 API_URL = "https://www.hpgamestream.com/api/content/deals/categories?queryDeals=true"
@@ -51,10 +56,13 @@ def fetch_giveaways():
     HEADERS["currentTimestamp"] = str(int(time.time()))
 
     response = requests.get(
-        API_URL,
-        headers=HEADERS,
-        timeout=30
-    )
+    API_URL,
+    headers=HEADERS,
+    timeout=30,
+    verify=False  # TEMPORARY: HP's certificate has expired
+)
+
+response.raise_for_status()
 
     response.raise_for_status()
 
